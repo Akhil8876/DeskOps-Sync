@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: hsl(222 47% 6%);
+  --color-surface: hsl(222 47% 9%);
+  --color-surface-2: hsl(222 40% 12%);
+  --color-surface-3: hsl(222 35% 16%);
+  --color-border: hsl(222 30% 20%);
+  --color-border-subtle: hsl(222 25% 16%);
+  --color-text: hsl(210 40% 96%);
+  --color-text-muted: hsl(215 20% 55%);
+  --color-text-subtle: hsl(215 15% 40%);
+  --color-accent: hsl(258 90% 66%);
+  --color-accent-hover: hsl(258 90% 72%);
+  --color-accent-dim: hsl(258 60% 20%);
+  --color-success: hsl(142 71% 45%);
+  --color-warning: hsl(38 92% 50%);
+  --color-danger: hsl(0 84% 60%);
+  --color-info: hsl(199 89% 48%);
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html, body, #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-text-subtle);
+  }
+}
+
+/* Streaming text cursor */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.streaming-cursor::after {
+  content: "▋";
+  animation: blink 0.8s step-end infinite;
+  color: var(--color-accent);
+  margin-left: 1px;
+}
+
+/* Tool execution pulse */
+@keyframes tool-pulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+.tool-running {
+  animation: tool-pulse 1.5s ease-in-out infinite;
+}
+
+/* Fade-in for messages */
+@keyframes message-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.message-enter {
+  animation: message-in 0.2s ease-out forwards;
+}

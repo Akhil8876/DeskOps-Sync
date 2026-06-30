@@ -1,10 +1,31 @@
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
+import type {
+  ChatCompletionMessageParam,
+  ChatCompletionTool,
+  ChatCompletionToolMessageParam,
+} from "openai/resources/chat/completions";
 import { SYSTEM_PROMPT } from "./system-prompt";
 import { TOOLS, executeTool } from "./tools";
 import type { Response } from "express";
 import * as storage from "../storage";
 
-const client = new Anthropic();
+// Points to Ollama by default — swap baseURL/apiKey for any OpenAI-compatible endpoint
+const client = new OpenAI({
+  baseURL: process.env.AI_BASE_URL ?? "http://localhost:11434/v1",
+  apiKey: process.env.AI_API_KEY ?? "ollama",
+});
+
+const MODEL = process.env.AI_MODEL ?? "qwen2.5:7b";
+
+// Convert our tool definitions to OpenAI function-calling format
+const OPENAI_TOOLS: ChatCompletionTool[] = TOOLS.map((tool) => ({
+  type: "function",
+  function: {
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.input_schema as Record<string, unknown>,
+  },
+}));
 
 export interface StreamEvent {
   type: "text" | "tool_start" | "tool_result" | "done" | "error";
@@ -20,12 +41,17 @@ function sendEvent(res: Response, event: StreamEvent) {
   res.write(`data: ${JSON.stringify(event)}\n\n`);
 }
 
+interface PartialToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
 export async function runAgentStream(
   conversationId: number,
   userMessage: string,
   res: Response
 ): Promise<void> {
-  // Set up SSE headers
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -33,107 +59,111 @@ export async function runAgentStream(
 
   try {
     // Save user message
-    await storage.addMessage({
-      conversationId,
-      role: "user",
-      content: userMessage,
-    });
+    await storage.addMessage({ conversationId, role: "user", content: userMessage });
 
-    // Load conversation history
+    // Build conversation history in OpenAI format
     const history = await storage.getMessages(conversationId);
-    const claudeMessages: Anthropic.MessageParam[] = history.map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: m.content,
-    }));
+    const messages: ChatCompletionMessageParam[] = [
+      { role: "system", content: SYSTEM_PROMPT },
+      ...history.map((m): ChatCompletionMessageParam => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      })),
+    ];
 
     let fullResponseText = "";
     const toolCallLog: Array<{ name: string; input: unknown; result: unknown }> = [];
 
     // Agentic loop
     while (true) {
-      const stream = client.messages.stream({
-        model: "claude-opus-4-8",
-        max_tokens: 8096,
-        thinking: { type: "adaptive" },
-        system: SYSTEM_PROMPT,
-        tools: TOOLS,
-        messages: claudeMessages,
+      const stream = await client.chat.completions.create({
+        model: MODEL,
+        messages,
+        tools: OPENAI_TOOLS,
+        tool_choice: "auto",
+        stream: true,
+        temperature: 0.3,
       });
 
       let currentText = "";
       let stopReason: string | null = null;
-      const toolUseBlocks: Anthropic.ToolUseBlock[] = [];
-      const allContentBlocks: Anthropic.ContentBlock[] = [];
+      const partialToolCalls: Record<number, PartialToolCall> = {};
 
-      // Stream text chunks
-      for await (const event of stream) {
-        if (event.type === "content_block_delta") {
-          if (event.delta.type === "text_delta") {
-            currentText += event.delta.text;
-            fullResponseText += event.delta.text;
-            sendEvent(res, { type: "text", content: event.delta.text });
-          }
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta;
+        const finishReason = chunk.choices[0]?.finish_reason;
+
+        // Stream text
+        if (delta?.content) {
+          currentText += delta.content;
+          fullResponseText += delta.content;
+          sendEvent(res, { type: "text", content: delta.content });
         }
-        if (event.type === "message_delta") {
-          stopReason = event.delta.stop_reason;
-        }
-        if (event.type === "message_stop") {
-          const msg = await stream.finalMessage();
-          stopReason = msg.stop_reason;
-          for (const block of msg.content) {
-            allContentBlocks.push(block);
-            if (block.type === "tool_use") {
-              toolUseBlocks.push(block);
+
+        // Accumulate tool call chunks (arguments arrive in pieces)
+        if (delta?.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const idx = tc.index;
+            if (!partialToolCalls[idx]) {
+              partialToolCalls[idx] = { id: "", name: "", arguments: "" };
             }
+            if (tc.id) partialToolCalls[idx].id = tc.id;
+            if (tc.function?.name) partialToolCalls[idx].name = tc.function.name;
+            if (tc.function?.arguments) partialToolCalls[idx].arguments += tc.function.arguments;
           }
         }
+
+        if (finishReason) stopReason = finishReason;
       }
 
-      // If no tool calls, we're done
-      if (stopReason !== "tool_use" || toolUseBlocks.length === 0) {
+      const toolCalls = Object.values(partialToolCalls);
+
+      // No tool calls — we're done
+      if (stopReason !== "tool_calls" || toolCalls.length === 0) {
         break;
       }
 
-      // Add assistant message with tool_use blocks
-      claudeMessages.push({
+      // Add assistant message with tool calls to history
+      messages.push({
         role: "assistant",
-        content: allContentBlocks,
+        content: currentText || null,
+        tool_calls: toolCalls.map((tc) => ({
+          id: tc.id,
+          type: "function" as const,
+          function: { name: tc.name, arguments: tc.arguments },
+        })),
       });
 
       // Execute each tool and collect results
-      const toolResults: Anthropic.ToolResultBlockParam[] = [];
+      const toolResultMessages: ChatCompletionToolMessageParam[] = [];
 
-      for (const toolBlock of toolUseBlocks) {
-        sendEvent(res, {
-          type: "tool_start",
-          toolName: toolBlock.name,
-          toolInput: toolBlock.input,
-        });
+      for (const tc of toolCalls) {
+        let input: Record<string, unknown> = {};
+        try {
+          input = JSON.parse(tc.arguments) as Record<string, unknown>;
+        } catch {
+          input = {};
+        }
 
-        const result = await executeTool(toolBlock.name, toolBlock.input as Record<string, unknown>);
-        toolCallLog.push({ name: toolBlock.name, input: toolBlock.input, result });
+        sendEvent(res, { type: "tool_start", toolName: tc.name, toolInput: input });
 
-        sendEvent(res, {
-          type: "tool_result",
-          toolName: toolBlock.name,
-          toolResult: result,
-        });
+        const result = await executeTool(tc.name, input);
+        toolCallLog.push({ name: tc.name, input, result });
 
-        toolResults.push({
-          type: "tool_result",
-          tool_use_id: toolBlock.id,
+        sendEvent(res, { type: "tool_result", toolName: tc.name, toolResult: result });
+
+        toolResultMessages.push({
+          role: "tool",
+          tool_call_id: tc.id,
           content: JSON.stringify(result),
         });
       }
 
-      // Add tool results to continue the loop
-      claudeMessages.push({
-        role: "user",
-        content: toolResults,
-      });
+      // Feed results back and continue the loop
+      messages.push(...toolResultMessages);
     }
 
-    // Save complete assistant response
+    // Persist final assistant response
     const savedMessage = await storage.addMessage({
       conversationId,
       role: "assistant",
@@ -141,7 +171,7 @@ export async function runAgentStream(
       toolCalls: toolCallLog.length > 0 ? toolCallLog : undefined,
     });
 
-    // Auto-title the conversation after first exchange
+    // Auto-title conversation on first exchange
     const allMessages = await storage.getMessages(conversationId);
     if (allMessages.length <= 3) {
       const title = userMessage.slice(0, 60) + (userMessage.length > 60 ? "…" : "");
@@ -153,7 +183,7 @@ export async function runAgentStream(
     console.error("Agent error:", err);
     sendEvent(res, {
       type: "error",
-      error: err instanceof Error ? err.message : "An unexpected error occurred",
+      error: err instanceof Error ? err.message : "Unexpected error",
     });
   } finally {
     res.end();

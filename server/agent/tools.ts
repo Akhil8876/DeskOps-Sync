@@ -1,8 +1,16 @@
-import type Anthropic from "@anthropic-ai/sdk";
 import * as storage from "../storage";
 
-// Tool definitions for Claude
-export const TOOLS: Anthropic.Tool[] = [
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  input_schema: {
+    type: "object";
+    properties: Record<string, unknown>;
+    required?: string[];
+  };
+}
+
+export const TOOLS: ToolDefinition[] = [
   {
     name: "search_products",
     description: "Search and filter products in the store catalog. Use this to find products by name, category, price range, or stock status.",

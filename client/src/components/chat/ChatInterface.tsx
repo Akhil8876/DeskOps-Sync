@@ -237,7 +237,7 @@ export function ChatInterface() {
         {/* Footer */}
         <div className="px-4 py-3 border-t border-[var(--color-border)]">
           <p className="text-[10px] text-[var(--color-text-subtle)] text-center">
-            Powered by Claude Opus 4.8
+            Powered by Aria AI
           </p>
         </div>
       </aside>

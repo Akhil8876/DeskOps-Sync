@@ -34,37 +34,60 @@ Place an order, then ask Aria: *"Show me the most recent orders"*, *"Which produ
 
 ## Quick start
 
+> The `npm` steps are identical on every OS. Only the shell commands (copying
+> `.env`, starting Postgres) differ — Windows variants are called out below.
+
 ### 1. Install Ollama (local AI — free, private, offline)
 
-```bash
-# macOS / Linux
-curl -fsSL https://ollama.com/install.sh | sh
+- **Windows / macOS:** download the installer from https://ollama.com/download
+- **Linux:** `curl -fsSL https://ollama.com/install.sh | sh`
 
-# Pull a model with strong tool-calling support
+Then pull a model with strong tool-calling support (run this exact line — no trailing comment):
+
+```
 ollama pull qwen2.5:7b
 ```
 
-### 2. Start the database
+### 2. Get a PostgreSQL database
 
-```bash
-docker compose up -d      # Postgres 16 on localhost:5432 (see docker-compose.yml)
-```
+Pick **one**:
+
+- **Neon (easiest — no install, works everywhere incl. Windows):** create a free DB at
+  https://neon.tech and copy its connection string. Skip Docker entirely.
+- **Docker (macOS/Linux, or Windows with Docker Desktop):** `docker compose up -d`
+- **Local Postgres install:** install PostgreSQL, then create an **empty** database (see the db:push note below).
 
 ### 3. Configure environment
 
+Create a `.env` file (copy the example):
+
 ```bash
-cp .env.example .env      # defaults match docker-compose.yml — works as-is
+# macOS / Linux
+cp .env.example .env
 ```
+```bat
+REM Windows (cmd)
+copy .env.example .env
+```
+
+Then open `.env` and set `DATABASE_URL` to your database from step 2.
+For Neon it looks like: `postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require`
 
 ### 4. Install and run
 
 ```bash
 npm install
-npm run db:push           # create tables
-npm run dev               # http://localhost:5000
+npm run db:push     # create tables (see note below if this errors)
+npm run dev         # http://localhost:5000
 ```
 
 Demo data (12 products, 6 customers, 6 orders) is seeded automatically on first run. Open **http://localhost:5000** for the shop and **http://localhost:5000/admin** for the dashboard + Aria.
+
+> **`db:push` error `column "id" is in a primary key`?** Your `DATABASE_URL`
+> points at a database that already contains tables from something else, and
+> Drizzle is trying to reconcile them. Point `DATABASE_URL` at a **fresh, empty
+> database** (a new Neon project, or `CREATE DATABASE aria;`) and re-run
+> `npm run db:push`. A clean database only runs `CREATE TABLE` statements.
 
 ---
 

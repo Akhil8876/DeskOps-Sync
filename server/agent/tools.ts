@@ -201,6 +201,209 @@ export const TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    name: "create_product",
+    description: "Add a brand-new product to the catalog.",
+    input_schema: {
+      type: "object",
+      required: ["sku", "name", "category", "price"],
+      properties: {
+        sku: { type: "string", description: "Unique stock-keeping unit" },
+        name: { type: "string" },
+        description: { type: "string" },
+        category: { type: "string" },
+        price: { type: "number" },
+        compare_price: { type: "number", description: "Original/'was' price for showing a discount" },
+        stock: { type: "number", description: "Initial stock quantity (default 0)" },
+        low_stock_threshold: { type: "number" },
+        status: { type: "string", enum: ["active", "draft", "archived"], description: "Default draft" },
+        tags: { type: "array", items: { type: "string" } },
+      },
+    },
+  },
+  {
+    name: "delete_product",
+    description: "Permanently delete a product from the catalog. Use archive (update_product status) for a reversible option.",
+    input_schema: {
+      type: "object",
+      required: ["product_id"],
+      properties: { product_id: { type: "number" } },
+    },
+  },
+  {
+    name: "duplicate_product",
+    description: "Create a draft copy of an existing product (stock reset to 0, new SKU). Useful as a template for a variant.",
+    input_schema: {
+      type: "object",
+      required: ["product_id"],
+      properties: { product_id: { type: "number" } },
+    },
+  },
+  {
+    name: "bulk_update_prices",
+    description: "Change prices for many products at once, optionally scoped to a category. E.g. increase all footwear by 10%.",
+    input_schema: {
+      type: "object",
+      required: ["change_type", "value"],
+      properties: {
+        category: { type: "string", description: "Limit to this category; omit for all products" },
+        change_type: { type: "string", enum: ["percentage", "fixed", "set"], description: "'percentage'/'fixed' adjust, 'set' overwrites" },
+        value: { type: "number" },
+        direction: { type: "string", enum: ["increase", "decrease"], description: "For percentage/fixed (default increase)" },
+      },
+    },
+  },
+  {
+    name: "create_collection",
+    description: "Create a product collection (a named grouping of products, like a Shopify custom collection).",
+    input_schema: {
+      type: "object",
+      required: ["title"],
+      properties: {
+        title: { type: "string" },
+        description: { type: "string" },
+        product_ids: { type: "array", items: { type: "number" }, description: "Optional initial product IDs" },
+      },
+    },
+  },
+  {
+    name: "add_products_to_collection",
+    description: "Add one or more products to an existing collection.",
+    input_schema: {
+      type: "object",
+      required: ["collection_id", "product_ids"],
+      properties: {
+        collection_id: { type: "number" },
+        product_ids: { type: "array", items: { type: "number" } },
+      },
+    },
+  },
+  {
+    name: "list_collections",
+    description: "List all product collections and how many products each contains.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "create_customer",
+    description: "Create a new customer record.",
+    input_schema: {
+      type: "object",
+      required: ["email", "first_name", "last_name"],
+      properties: {
+        email: { type: "string" },
+        first_name: { type: "string" },
+        last_name: { type: "string" },
+        phone: { type: "string" },
+        tags: { type: "array", items: { type: "string" } },
+        notes: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "update_customer",
+    description: "Update a customer's details, tags, or notes.",
+    input_schema: {
+      type: "object",
+      required: ["customer_id"],
+      properties: {
+        customer_id: { type: "number" },
+        first_name: { type: "string" },
+        last_name: { type: "string" },
+        phone: { type: "string" },
+        tags: { type: "array", items: { type: "string" }, description: "Replaces existing tags" },
+        notes: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "get_top_customers",
+    description: "Get the highest-spending customers (for VIP targeting, loyalty, etc.).",
+    input_schema: {
+      type: "object",
+      properties: { limit: { type: "number", description: "How many (default 5)" } },
+    },
+  },
+  {
+    name: "fulfill_order",
+    description: "Fulfill an order — marks it shipped and fulfilled, optionally attaching a tracking number.",
+    input_schema: {
+      type: "object",
+      required: ["order_id"],
+      properties: {
+        order_id: { type: "number" },
+        tracking_number: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "cancel_order",
+    description: "Cancel an order, optionally restocking its items back into inventory.",
+    input_schema: {
+      type: "object",
+      required: ["order_id"],
+      properties: {
+        order_id: { type: "number" },
+        restock: { type: "boolean", description: "Return the ordered quantities to stock (default false)" },
+        reason: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "add_order_note",
+    description: "Append an internal note to an order.",
+    input_schema: {
+      type: "object",
+      required: ["order_id", "note"],
+      properties: {
+        order_id: { type: "number" },
+        note: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "tag_order",
+    description: "Add tags to an order (e.g. 'priority', 'gift', 'wholesale') for organisation.",
+    input_schema: {
+      type: "object",
+      required: ["order_id", "tags"],
+      properties: {
+        order_id: { type: "number" },
+        tags: { type: "array", items: { type: "string" } },
+      },
+    },
+  },
+  {
+    name: "set_discount_active",
+    description: "Activate or deactivate a discount code.",
+    input_schema: {
+      type: "object",
+      required: ["code", "active"],
+      properties: {
+        code: { type: "string" },
+        active: { type: "boolean" },
+      },
+    },
+  },
+  {
+    name: "delete_discount",
+    description: "Permanently delete a discount code.",
+    input_schema: {
+      type: "object",
+      required: ["code"],
+      properties: { code: { type: "string" } },
+    },
+  },
+  {
+    name: "get_sales_report",
+    description: "Sales report over a time window, optionally broken down by category.",
+    input_schema: {
+      type: "object",
+      properties: {
+        days: { type: "number", description: "Look-back window in days (default 30)" },
+        by_category: { type: "boolean", description: "Include per-category revenue breakdown" },
+      },
+    },
+  },
 ];
 
 // Tool executor — maps tool names to storage calls
@@ -326,6 +529,100 @@ export async function executeTool(name: string, input: Record<string, unknown>):
 
     case "get_discounts":
       return storage.getDiscounts(input.active_only as boolean | undefined);
+
+    case "create_product":
+      return storage.createProduct({
+        sku: input.sku as string,
+        name: input.name as string,
+        description: input.description as string | undefined,
+        category: input.category as string,
+        price: input.price as number,
+        comparePrice: input.compare_price as number | undefined,
+        stock: (input.stock as number | undefined) ?? 0,
+        lowStockThreshold: (input.low_stock_threshold as number | undefined) ?? 10,
+        status: (input.status as string | undefined) ?? "draft",
+        tags: input.tags as string[] | undefined,
+      });
+
+    case "delete_product":
+      return storage.deleteProduct(input.product_id as number);
+
+    case "duplicate_product":
+      return storage.duplicateProduct(input.product_id as number);
+
+    case "bulk_update_prices":
+      return storage.bulkUpdatePrices({
+        category: input.category as string | undefined,
+        changeType: input.change_type as "percentage" | "fixed" | "set",
+        value: input.value as number,
+        direction: input.direction as "increase" | "decrease" | undefined,
+      });
+
+    case "create_collection":
+      return storage.createCollection(
+        input.title as string,
+        input.description as string | undefined,
+        (input.product_ids as number[] | undefined) ?? [],
+      );
+
+    case "add_products_to_collection":
+      return storage.addProductsToCollection(
+        input.collection_id as number,
+        input.product_ids as number[],
+      );
+
+    case "list_collections":
+      return storage.listCollections();
+
+    case "create_customer":
+      return storage.createCustomer({
+        email: input.email as string,
+        firstName: input.first_name as string,
+        lastName: input.last_name as string,
+        phone: input.phone as string | undefined,
+        tags: input.tags as string[] | undefined,
+        notes: input.notes as string | undefined,
+      });
+
+    case "update_customer": {
+      const updates: Record<string, unknown> = {};
+      if (input.first_name !== undefined) updates.firstName = input.first_name;
+      if (input.last_name !== undefined) updates.lastName = input.last_name;
+      if (input.phone !== undefined) updates.phone = input.phone;
+      if (input.tags !== undefined) updates.tags = input.tags;
+      if (input.notes !== undefined) updates.notes = input.notes;
+      return storage.updateCustomer(input.customer_id as number, updates as Parameters<typeof storage.updateCustomer>[1]);
+    }
+
+    case "get_top_customers":
+      return storage.getTopCustomers(input.limit as number | undefined);
+
+    case "fulfill_order":
+      return storage.fulfillOrder(input.order_id as number, input.tracking_number as string | undefined);
+
+    case "cancel_order":
+      return storage.cancelOrder(input.order_id as number, {
+        restock: input.restock as boolean | undefined,
+        reason: input.reason as string | undefined,
+      });
+
+    case "add_order_note":
+      return storage.addOrderNote(input.order_id as number, input.note as string);
+
+    case "tag_order":
+      return storage.tagOrder(input.order_id as number, input.tags as string[]);
+
+    case "set_discount_active":
+      return storage.setDiscountActive(input.code as string, input.active as boolean);
+
+    case "delete_discount":
+      return storage.deleteDiscount(input.code as string);
+
+    case "get_sales_report":
+      return storage.getSalesReport(
+        input.days as number | undefined,
+        input.by_category as boolean | undefined,
+      );
 
     default:
       return { error: `Unknown tool: ${name}` };

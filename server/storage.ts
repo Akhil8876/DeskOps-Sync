@@ -1,13 +1,14 @@
 import { eq, desc, like, and, gte, lte, or, sql, ilike } from "drizzle-orm";
 import { db } from "./db";
 import {
-  conversations, messages, products, customers, orders, discounts, notifications,
+  conversations, messages, products, customers, orders, discounts, notifications, collections,
   type Conversation, type InsertConversation,
   type Message, type InsertMessage,
   type Product, type InsertProduct,
   type Customer, type InsertCustomer,
   type Order, type InsertOrder,
   type Discount, type InsertDiscount,
+  type Collection,
   type OrderItem,
 } from "@shared/schema";
 
@@ -318,6 +319,217 @@ export async function getCategories(): Promise<string[]> {
     .from(products)
     .where(eq(products.status, "active"));
   return rows.map((r) => r.category).sort();
+}
+
+// ── Products: create / delete / duplicate / bulk pricing ─────────────────────────
+
+export async function deleteProduct(id: number): Promise<{ deleted: boolean; name?: string }> {
+  const product = await getProduct(id);
+  if (!product) return { deleted: false };
+  await db.delete(products).where(eq(products.id, id));
+  return { deleted: true, name: product.name };
+}
+
+export async function duplicateProduct(id: number): Promise<Product | { error: string }> {
+  const src = await getProduct(id);
+  if (!src) return { error: "Product not found" };
+  const [copy] = await db.insert(products).values({
+    sku: `${src.sku}-COPY-${Date.now().toString().slice(-4)}`,
+    name: `${src.name} (Copy)`,
+    description: src.description,
+    category: src.category,
+    price: src.price,
+    comparePrice: src.comparePrice,
+    stock: 0,
+    lowStockThreshold: src.lowStockThreshold,
+    status: "draft",
+    imageUrl: src.imageUrl,
+    tags: src.tags,
+    weight: src.weight,
+  }).returning();
+  return copy;
+}
+
+export interface BulkPriceParams {
+  category?: string;
+  changeType: "percentage" | "fixed" | "set";
+  value: number;
+  direction?: "increase" | "decrease";
+}
+
+export async function bulkUpdatePrices(params: BulkPriceParams): Promise<{ updated: number; sample: Array<{ name: string; oldPrice: number; newPrice: number }> }> {
+  const targets = params.category
+    ? await db.select().from(products).where(eq(products.category, params.category))
+    : await db.select().from(products);
+
+  const sample: Array<{ name: string; oldPrice: number; newPrice: number }> = [];
+  let updated = 0;
+
+  for (const p of targets) {
+    let newPrice = p.price;
+    const sign = params.direction === "decrease" ? -1 : 1;
+    if (params.changeType === "percentage") newPrice = p.price * (1 + (sign * params.value) / 100);
+    else if (params.changeType === "fixed") newPrice = p.price + sign * params.value;
+    else if (params.changeType === "set") newPrice = params.value;
+    newPrice = Math.max(0, Math.round(newPrice * 100) / 100);
+    await updateProduct(p.id, { price: newPrice });
+    if (sample.length < 5) sample.push({ name: p.name, oldPrice: p.price, newPrice });
+    updated++;
+  }
+  return { updated, sample };
+}
+
+// ── Collections ──────────────────────────────────────────────────────────────────
+
+function slugify(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+export async function createCollection(title: string, description?: string, productIds: number[] = []): Promise<Collection> {
+  const [row] = await db.insert(collections).values({
+    title,
+    handle: `${slugify(title)}-${Date.now().toString().slice(-4)}`,
+    description,
+    productIds,
+  }).returning();
+  return row;
+}
+
+export async function listCollections(): Promise<Array<Collection & { productCount: number }>> {
+  const rows = await db.select().from(collections).orderBy(desc(collections.createdAt));
+  return rows.map((c) => ({ ...c, productCount: (c.productIds ?? []).length }));
+}
+
+export async function addProductsToCollection(collectionId: number, productIds: number[]): Promise<Collection | { error: string }> {
+  const [col] = await db.select().from(collections).where(eq(collections.id, collectionId));
+  if (!col) return { error: "Collection not found" };
+  const merged = Array.from(new Set([...(col.productIds ?? []), ...productIds]));
+  const [updated] = await db.update(collections).set({ productIds: merged }).where(eq(collections.id, collectionId)).returning();
+  return updated;
+}
+
+// ── Customers: create / update ───────────────────────────────────────────────────
+
+export async function createCustomer(data: InsertCustomer): Promise<Customer> {
+  const [row] = await db.insert(customers).values(data).returning();
+  return row;
+}
+
+export async function getTopCustomers(limit = 5): Promise<Customer[]> {
+  return db.select().from(customers).orderBy(desc(customers.totalSpent)).limit(limit);
+}
+
+// ── Orders: cancel / notes / tags / fulfillment ──────────────────────────────────
+
+export async function cancelOrder(id: number, opts: { restock?: boolean; reason?: string }): Promise<Order | { error: string }> {
+  const order = await getOrder(id);
+  if (!order) return { error: "Order not found" };
+
+  if (opts.restock) {
+    const items = order.items as OrderItem[];
+    for (const item of items) {
+      const product = await getProduct(item.productId);
+      if (product) await updateProduct(product.id, { stock: product.stock + item.quantity });
+    }
+  }
+
+  const [updated] = await db.update(orders).set({
+    status: "cancelled",
+    cancelReason: opts.reason ?? "Cancelled by store admin",
+    updatedAt: new Date(),
+  }).where(eq(orders.id, id)).returning();
+  return updated;
+}
+
+export async function fulfillOrder(id: number, trackingNumber?: string): Promise<Order | { error: string }> {
+  const order = await getOrder(id);
+  if (!order) return { error: "Order not found" };
+  const [updated] = await db.update(orders).set({
+    status: "shipped",
+    fulfillmentStatus: "fulfilled",
+    trackingNumber: trackingNumber ?? order.trackingNumber,
+    updatedAt: new Date(),
+  }).where(eq(orders.id, id)).returning();
+  return updated;
+}
+
+export async function addOrderNote(id: number, note: string): Promise<Order | { error: string }> {
+  const order = await getOrder(id);
+  if (!order) return { error: "Order not found" };
+  const combined = order.notes ? `${order.notes}\n${note}` : note;
+  const [updated] = await db.update(orders).set({ notes: combined, updatedAt: new Date() }).where(eq(orders.id, id)).returning();
+  return updated;
+}
+
+export async function tagOrder(id: number, tags: string[]): Promise<Order | { error: string }> {
+  const order = await getOrder(id);
+  if (!order) return { error: "Order not found" };
+  const merged = Array.from(new Set([...(order.tags ?? []), ...tags]));
+  const [updated] = await db.update(orders).set({ tags: merged, updatedAt: new Date() }).where(eq(orders.id, id)).returning();
+  return updated;
+}
+
+// ── Discounts: update / delete ───────────────────────────────────────────────────
+
+export async function setDiscountActive(code: string, active: boolean): Promise<Discount | { error: string }> {
+  const [row] = await db.update(discounts).set({ active }).where(eq(discounts.code, code.toUpperCase())).returning();
+  if (!row) return { error: "Discount code not found" };
+  return row;
+}
+
+export async function deleteDiscount(code: string): Promise<{ deleted: boolean }> {
+  const result = await db.delete(discounts).where(eq(discounts.code, code.toUpperCase())).returning();
+  return { deleted: result.length > 0 };
+}
+
+// ── Sales report ─────────────────────────────────────────────────────────────────
+
+export async function getSalesReport(days = 30, byCategory = false): Promise<{
+  periodDays: number;
+  totalRevenue: number;
+  orderCount: number;
+  avgOrderValue: number;
+  byCategory?: Array<{ category: string; revenue: number; units: number }>;
+}> {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const paidOrders = await db.select().from(orders)
+    .where(and(eq(orders.paymentStatus, "paid"), gte(orders.createdAt, since)));
+
+  let totalRevenue = 0;
+  const catMap: Record<string, { revenue: number; units: number }> = {};
+
+  // Build a sku→category lookup only if needed
+  let skuCategory: Record<string, string> = {};
+  if (byCategory) {
+    const allProducts = await db.select().from(products);
+    skuCategory = Object.fromEntries(allProducts.map((p) => [p.sku, p.category]));
+  }
+
+  for (const o of paidOrders) {
+    totalRevenue += o.total;
+    if (byCategory) {
+      const items = o.items as OrderItem[];
+      for (const item of items) {
+        const cat = skuCategory[item.sku] ?? "Uncategorized";
+        if (!catMap[cat]) catMap[cat] = { revenue: 0, units: 0 };
+        catMap[cat].revenue += item.total;
+        catMap[cat].units += item.quantity;
+      }
+    }
+  }
+
+  const orderCount = paidOrders.length;
+  return {
+    periodDays: days,
+    totalRevenue: Math.round(totalRevenue * 100) / 100,
+    orderCount,
+    avgOrderValue: orderCount ? Math.round((totalRevenue / orderCount) * 100) / 100 : 0,
+    ...(byCategory ? {
+      byCategory: Object.entries(catMap)
+        .map(([category, v]) => ({ category, revenue: Math.round(v.revenue * 100) / 100, units: v.units }))
+        .sort((a, b) => b.revenue - a.revenue),
+    } : {}),
+  };
 }
 
 // ── Discounts ──────────────────────────────────────────────────────────────────

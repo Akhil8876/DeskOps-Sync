@@ -25,6 +25,10 @@ const SUGGESTIONS = [
 const MUTATING_TOOLS = new Set([
   "update_order_status", "process_refund", "manage_inventory",
   "update_product", "create_discount_code", "send_customer_notification",
+  "create_product", "delete_product", "duplicate_product", "bulk_update_prices",
+  "create_customer", "update_customer", "fulfill_order", "cancel_order",
+  "add_order_note", "tag_order", "set_discount_active", "delete_discount",
+  "create_collection", "add_products_to_collection",
 ]);
 
 export function AriaChatPanel() {

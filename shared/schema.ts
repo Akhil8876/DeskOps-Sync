@@ -69,9 +69,22 @@ export const orders = pgTable("orders", {
   total: real("total").notNull(),
   shippingAddress: jsonb("shipping_address"),
   trackingNumber: text("tracking_number"),
+  fulfillmentStatus: text("fulfillment_status").default("unfulfilled"), // unfulfilled | partial | fulfilled
+  tags: text("tags").array(),
   notes: text("notes"),
+  cancelReason: text("cancel_reason"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// Collections (Shopify-style manual product groupings)
+export const collections = pgTable("collections", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull(),
+  handle: text("handle").notNull().unique(),
+  description: text("description"),
+  productIds: jsonb("product_ids").$type<number[]>().notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 // Discounts
@@ -106,6 +119,7 @@ export const insertProductSchema = createInsertSchema(products).omit({ id: true,
 export const insertCustomerSchema = createInsertSchema(customers).omit({ id: true, createdAt: true });
 export const insertOrderSchema = createInsertSchema(orders).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertDiscountSchema = createInsertSchema(discounts).omit({ id: true, createdAt: true });
+export const insertCollectionSchema = createInsertSchema(collections).omit({ id: true, createdAt: true });
 
 // Types
 export type Conversation = typeof conversations.$inferSelect;
@@ -120,6 +134,8 @@ export type Order = typeof orders.$inferSelect;
 export type InsertOrder = z.infer<typeof insertOrderSchema>;
 export type Discount = typeof discounts.$inferSelect;
 export type InsertDiscount = z.infer<typeof insertDiscountSchema>;
+export type Collection = typeof collections.$inferSelect;
+export type InsertCollection = z.infer<typeof insertCollectionSchema>;
 
 // Order item type
 export interface OrderItem {

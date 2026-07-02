@@ -1,8 +1,58 @@
 import { Router } from "express";
+import { z } from "zod";
 import * as storage from "./storage";
 import { runAgentStream } from "./agent/index";
 
 export const router = Router();
+
+// ── Storefront ─────────────────────────────────────────────────────────────────
+
+router.get("/storefront/products", async (req, res) => {
+  const products = await storage.searchProducts({
+    query: req.query.q as string | undefined,
+    category: req.query.category as string | undefined,
+    status: "active",
+    limit: 100,
+  });
+  res.json(products);
+});
+
+router.get("/storefront/categories", async (_req, res) => {
+  const categories = await storage.getCategories();
+  res.json(categories);
+});
+
+const checkoutSchema = z.object({
+  items: z.array(z.object({
+    productId: z.number(),
+    quantity: z.number().int().positive(),
+  })).min(1),
+  customer: z.object({
+    firstName: z.string().min(1),
+    lastName: z.string().min(1),
+    email: z.string().email(),
+    phone: z.string().optional(),
+    address1: z.string().min(1),
+    city: z.string().min(1),
+    state: z.string().min(1),
+    zip: z.string().min(1),
+    country: z.string().optional(),
+  }),
+});
+
+router.post("/storefront/checkout", async (req, res) => {
+  const parsed = checkoutSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid checkout data", details: parsed.error.flatten() });
+    return;
+  }
+  try {
+    const result = await storage.createOrderFromCheckout(parsed.data.items, parsed.data.customer);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : "Checkout failed" });
+  }
+});
 
 // ── Conversations ──────────────────────────────────────────────────────────────
 

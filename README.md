@@ -1,8 +1,16 @@
-# Aria — AI E-Commerce Operations Agent
+# Aria — AI E-Commerce Agent + Live Demo Store
 
-A fully standalone AI assistant for e-commerce operations. Runs entirely on **local AI** — no external API dependencies, no data leaves your server, no per-token costs.
+A fully standalone AI commerce assistant **plus a working demo store** to test it on. Runs entirely on **local AI** — no external API dependencies, no data leaves your server, no per-token costs.
 
-## What it does
+The app has three surfaces, all sharing one database:
+
+| Route | What it is |
+|---|---|
+| `/` | **Storefront** — browse products, add to cart, checkout (creates real orders) |
+| `/cart` | **Cart & checkout** — places a real order and decrements stock |
+| `/admin` | **Admin dashboard + Aria** — live charts/tables next to the Aria chat |
+
+## What Aria does
 
 Aria understands natural language and can autonomously:
 - Search, update, and manage products
@@ -12,6 +20,17 @@ Aria understands natural language and can autonomously:
 - Analyse store performance (revenue, top products, inventory)
 - Create and manage discount codes
 - Alert on low-stock items
+
+## The demo loop 🎯
+
+```
+Shop at /  →  checkout  →  order + customer + stock change land in Postgres
+                                        │
+                                        ▼
+Go to /admin  →  dashboard updates live  +  ask Aria about the order you just placed
+```
+
+Place an order, then ask Aria: *"Show me the most recent orders"*, *"Which products are low on stock?"*, or *"Mark order ORD-2026-0007 as shipped"* — it operates on the live data you just created.
 
 ## Quick start
 
@@ -25,31 +44,27 @@ curl -fsSL https://ollama.com/install.sh | sh
 ollama pull qwen2.5:7b
 ```
 
-### 2. Set up the database
+### 2. Start the database
 
 ```bash
-# Using Docker
-docker run -d --name aria-db \
-  -e POSTGRES_PASSWORD=postgres \
-  -p 5432:5432 postgres:16
+docker compose up -d      # Postgres 16 on localhost:5432 (see docker-compose.yml)
 ```
 
 ### 3. Configure environment
 
 ```bash
-cp .env.example .env
-# Edit .env — set DATABASE_URL at minimum
+cp .env.example .env      # defaults match docker-compose.yml — works as-is
 ```
 
 ### 4. Install and run
 
 ```bash
 npm install
-npm run db:push   # create tables
-npm run dev       # http://localhost:5000
+npm run db:push           # create tables
+npm run dev               # http://localhost:5000
 ```
 
-Demo data (12 products, 6 customers, 6 orders) is seeded automatically on first run.
+Demo data (12 products, 6 customers, 6 orders) is seeded automatically on first run. Open **http://localhost:5000** for the shop and **http://localhost:5000/admin** for the dashboard + Aria.
 
 ---
 
@@ -78,21 +93,40 @@ Aria works with **any OpenAI-compatible endpoint** — swap provider by changing
 ## Architecture
 
 ```
-client/                React 19 + Vite + TailwindCSS
-  └─ ChatInterface      streaming chat UI with sidebar
-  └─ useAgentStream     SSE hook for real-time responses
+client/src/            React 19 + Vite + TailwindCSS
+  ├─ pages/
+  │   ├─ storefront.tsx   customer shop (product grid + category filter)
+  │   ├─ cart.tsx         cart + checkout → places real orders
+  │   └─ admin.tsx        dashboard + embedded Aria chat
+  ├─ components/
+  │   ├─ storefront/      ProductCard
+  │   ├─ admin/           Dashboard (recharts) + AriaChatPanel
+  │   └─ chat/            MessageBubble, ToolCallCard (shared by Aria)
+  └─ hooks/
+      ├─ useCart.ts       localStorage cart store
+      └─ useAgentStream   SSE hook for real-time agent responses
 
 server/
-  └─ agent/
-      ├─ index.ts       agentic loop (streaming + tool use)
-      ├─ tools.ts       14 e-commerce tools + executors
-      └─ system-prompt  Aria's persona and behaviour rules
-  └─ routes.ts          REST API
-  └─ storage.ts         database layer (Drizzle ORM + PostgreSQL)
+  ├─ agent/
+  │   ├─ index.ts         agentic loop (streaming + tool use)
+  │   ├─ tools.ts         14 e-commerce tools + executors
+  │   └─ system-prompt    Aria's persona and behaviour rules
+  ├─ routes.ts            REST API (storefront + checkout + agent + admin)
+  └─ storage.ts           database layer incl. createOrderFromCheckout()
 
 shared/
-  └─ schema.ts          database schema shared between client and server
+  └─ schema.ts            database schema shared between client and server
 ```
+
+### Key endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/storefront/products` | Active catalog (optional `?category=`) |
+| `POST` | `/api/storefront/checkout` | Place an order (upserts customer, decrements stock) |
+| `POST` | `/api/agent/chat` | Aria streaming chat (SSE) |
+| `GET` | `/api/analytics` | Dashboard stats, top products, orders-by-status |
+| `GET` | `/api/orders` · `/api/products` | Admin tables |
 
 ## Embedding in another product
 

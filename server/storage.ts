@@ -8,6 +8,7 @@ import {
   type Customer, type InsertCustomer,
   type Order, type InsertOrder,
   type Discount, type InsertDiscount,
+  type OrderItem,
 } from "@shared/schema";
 
 // ── Conversations ──────────────────────────────────────────────────────────────
@@ -184,6 +185,139 @@ export async function getOrderByNumber(orderNumber: string): Promise<Order | und
 export async function updateOrder(id: number, data: Partial<Omit<Order, "id" | "createdAt">>): Promise<Order> {
   const [row] = await db.update(orders).set({ ...data, updatedAt: new Date() }).where(eq(orders.id, id)).returning();
   return row;
+}
+
+// ── Checkout (storefront → live order) ───────────────────────────────────────────
+
+export interface CheckoutItem {
+  productId: number;
+  quantity: number;
+}
+
+export interface CheckoutCustomer {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string;
+  address1: string;
+  city: string;
+  state: string;
+  zip: string;
+  country?: string;
+}
+
+export interface CheckoutResult {
+  order: Order;
+  customer: Customer;
+}
+
+const TAX_RATE = 0.08;
+const FREE_SHIPPING_THRESHOLD = 75;
+const SHIPPING_FEE = 9.99;
+
+/**
+ * Creates a real order from a storefront checkout: upserts the customer,
+ * generates an order number, decrements product stock, and records the order.
+ * This is what makes Aria testable on live data — everything here lands in the
+ * same tables Aria reads and mutates.
+ */
+export async function createOrderFromCheckout(
+  items: CheckoutItem[],
+  customerInput: CheckoutCustomer
+): Promise<CheckoutResult> {
+  if (items.length === 0) throw new Error("Cart is empty");
+
+  // Resolve products and build order line items at current prices
+  const orderItems: OrderItem[] = [];
+  let subtotal = 0;
+
+  for (const item of items) {
+    const product = await getProduct(item.productId);
+    if (!product) throw new Error(`Product ${item.productId} not found`);
+    if (product.stock < item.quantity) {
+      throw new Error(`Insufficient stock for ${product.name} (${product.stock} left)`);
+    }
+    const lineTotal = product.price * item.quantity;
+    subtotal += lineTotal;
+    orderItems.push({
+      productId: product.id,
+      sku: product.sku,
+      name: product.name,
+      quantity: item.quantity,
+      price: product.price,
+      total: Math.round(lineTotal * 100) / 100,
+    });
+  }
+
+  subtotal = Math.round(subtotal * 100) / 100;
+  const shipping = subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_FEE;
+  const tax = Math.round(subtotal * TAX_RATE * 100) / 100;
+  const total = Math.round((subtotal + shipping + tax) * 100) / 100;
+
+  // Upsert customer by email
+  let customer = await getCustomerByEmail(customerInput.email);
+  if (!customer) {
+    const [created] = await db.insert(customers).values({
+      email: customerInput.email,
+      firstName: customerInput.firstName,
+      lastName: customerInput.lastName,
+      phone: customerInput.phone,
+      totalOrders: 0,
+      totalSpent: 0,
+    }).returning();
+    customer = created;
+  }
+
+  // Generate a sequential order number for the current year
+  const year = new Date().getFullYear();
+  const [{ count }] = await db.select({ count: sql<number>`count(*)` }).from(orders);
+  const seq = String(Number(count) + 1).padStart(4, "0");
+  const orderNumber = `ORD-${year}-${seq}`;
+
+  const [order] = await db.insert(orders).values({
+    orderNumber,
+    customerId: customer.id,
+    customerEmail: customer.email,
+    status: "pending",
+    paymentStatus: "paid",
+    items: orderItems,
+    subtotal,
+    shipping,
+    tax,
+    discount: 0,
+    total,
+    shippingAddress: {
+      name: `${customerInput.firstName} ${customerInput.lastName}`,
+      address1: customerInput.address1,
+      city: customerInput.city,
+      state: customerInput.state,
+      zip: customerInput.zip,
+      country: customerInput.country ?? "US",
+    },
+  }).returning();
+
+  // Decrement stock so Aria's inventory tools reflect reality
+  for (const item of orderItems) {
+    const product = await getProduct(item.productId);
+    if (product) {
+      await updateProduct(product.id, { stock: Math.max(0, product.stock - item.quantity) });
+    }
+  }
+
+  // Update customer aggregates
+  const updatedCustomer = await updateCustomer(customer.id, {
+    totalOrders: (customer.totalOrders ?? 0) + 1,
+    totalSpent: Math.round(((customer.totalSpent ?? 0) + total) * 100) / 100,
+  });
+
+  return { order, customer: updatedCustomer };
+}
+
+export async function getCategories(): Promise<string[]> {
+  const rows = await db.selectDistinct({ category: products.category })
+    .from(products)
+    .where(eq(products.status, "active"));
+  return rows.map((r) => r.category).sort();
 }
 
 // ── Discounts ──────────────────────────────────────────────────────────────────

@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: aria-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: aria
+      POSTGRES_PASSWORD: aria
+      POSTGRES_DB: aria
+    ports:
+      - "5432:5432"
+    volumes:
+      - aria-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aria"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Optional: run Ollama in a container instead of on the host.
+  # For GPU acceleration, prefer installing Ollama natively (see README).
+  # Uncomment to run CPU-only Ollama alongside the DB:
+  #
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: aria-ollama
+  #   restart: unless-stopped
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - aria-ollama:/root/.ollama
+
+volumes:
+  aria-pgdata:
+  # aria-ollama:

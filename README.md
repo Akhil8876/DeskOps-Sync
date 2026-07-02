@@ -83,11 +83,18 @@ npm run dev         # http://localhost:5000
 
 Demo data (12 products, 6 customers, 6 orders) is seeded automatically on first run. Open **http://localhost:5000** for the shop and **http://localhost:5000/admin** for the dashboard + Aria.
 
-> **`db:push` error `column "id" is in a primary key`?** Your `DATABASE_URL`
-> points at a database that already contains tables from something else, and
-> Drizzle is trying to reconcile them. Point `DATABASE_URL` at a **fresh, empty
-> database** (a new Neon project, or `CREATE DATABASE aria;`) and re-run
-> `npm run db:push`. A clean database only runs `CREATE TABLE` statements.
+> **`db:push` shows data-loss warnings for tables you don't recognise** (e.g.
+> `sync_log`, `integration_config`)? Your `DATABASE_URL` is pointing at a
+> database that already contains **another project's** tables. Point it at a
+> **fresh, empty database** — a new Neon project, a new database in your existing
+> Neon project (`/aria_demo` instead of `/neondb`), or `CREATE DATABASE aria;`.
+> A clean database only runs `CREATE TABLE` statements, no data loss.
+>
+> **`.env` changes seem ignored?** This project loads `.env` with
+> `override: true` (see `server/load-env.ts`), so the file wins over machine-level
+> environment variables. If you're on a shell where you previously ran
+> `set DATABASE_URL=…` / `export DATABASE_URL=…`, that session value is separate
+> from `.env` — open a fresh terminal so `.env` is the single source of truth.
 
 ---
 

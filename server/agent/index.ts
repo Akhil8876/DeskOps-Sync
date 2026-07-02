@@ -9,9 +9,11 @@ import { TOOLS, executeTool } from "./tools";
 import type { Response } from "express";
 import * as storage from "../storage";
 
-// Points to Ollama by default — swap baseURL/apiKey for any OpenAI-compatible endpoint
+// Points to Ollama by default — swap baseURL/apiKey for any OpenAI-compatible endpoint.
+// Uses 127.0.0.1 (not "localhost") because on Windows "localhost" often resolves to
+// IPv6 ::1 first, while Ollama listens only on IPv4 127.0.0.1 → ECONNREFUSED.
 const client = new OpenAI({
-  baseURL: process.env.AI_BASE_URL ?? "http://localhost:11434/v1",
+  baseURL: process.env.AI_BASE_URL ?? "http://127.0.0.1:11434/v1",
   apiKey: process.env.AI_API_KEY ?? "ollama",
 });
 
